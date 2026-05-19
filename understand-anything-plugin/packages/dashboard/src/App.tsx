@@ -603,9 +603,11 @@ function Dashboard({ accessToken }: { accessToken: string }) {
           ) : (
             <GraphView />
           )}
-          <div className="absolute top-3 right-3 text-sm text-text-muted/60 pointer-events-none select-none">
-            Press <kbd className="kbd">?</kbd> for keyboard shortcuts
-          </div>
+          {viewMode !== "diagrams" && viewMode !== "api" && (
+            <div className="absolute top-3 right-3 text-sm text-text-muted/60 pointer-events-none select-none">
+              Press <kbd className="kbd">?</kbd> for keyboard shortcuts
+            </div>
+          )}
         </div>
 
         {/* Right sidebar — telescopes at narrower widths */}
