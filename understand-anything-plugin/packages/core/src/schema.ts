@@ -151,6 +151,7 @@ export function sanitizeGraph(data: Record<string, unknown>): Record<string, unk
   // Null → empty array for top-level collections
   if (data.tour === null || data.tour === undefined) result.tour = [];
   if (data.layers === null || data.layers === undefined) result.layers = [];
+  if (data.diagrams === null || data.diagrams === undefined) result.diagrams = [];
 
   // Sanitize nodes
   if (Array.isArray(data.nodes)) {
@@ -418,6 +419,14 @@ export const ProjectMetaSchema = z.object({
   gitCommitHash: z.string(),
 });
 
+export const SequenceDiagramSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  protocol: z.enum(["REST", "gRPC", "WebSocket", "NATS"]),
+  entryPoint: z.string().optional().nullable(),
+  mermaid: z.string(),
+});
+
 export const KnowledgeGraphSchema = z.object({
   version: z.string(),
   kind: z.enum(["codebase", "knowledge"]).optional(),
@@ -426,6 +435,7 @@ export const KnowledgeGraphSchema = z.object({
   edges: z.array(GraphEdgeSchema),
   layers: z.array(LayerSchema),
   tour: z.array(TourStepSchema),
+  diagrams: z.array(SequenceDiagramSchema).optional(),
 });
 
 export interface GraphIssue {
@@ -650,13 +660,26 @@ export function validateGraph(data: unknown): ValidationResult {
     }
   }
 
+  // Validate diagrams (pass through valid entries, drop broken)
+  const validDiagrams: z.infer<typeof SequenceDiagramSchema>[] = [];
+  if (Array.isArray(fixed.diagrams)) {
+    for (let i = 0; i < (fixed.diagrams as unknown[]).length; i++) {
+      const result = SequenceDiagramSchema.safeParse((fixed.diagrams as unknown[])[i]);
+      if (result.success) {
+        validDiagrams.push(result.data);
+      }
+    }
+  }
+
   const graph = {
     version: typeof fixed.version === "string" ? fixed.version : "1.0.0",
+    kind: typeof fixed.kind === "string" ? fixed.kind as "codebase" | "knowledge" : undefined,
     project: projectResult.data,
     nodes: validNodes,
     edges: validEdges,
     layers: validLayers,
     tour: validTour,
+    diagrams: validDiagrams.length > 0 ? validDiagrams : undefined,
   };
 
   return { success: true, data: graph, issues, errors: buildErrors(issues) };

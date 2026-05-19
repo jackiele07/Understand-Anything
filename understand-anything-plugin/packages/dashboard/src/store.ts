@@ -14,8 +14,7 @@ export type NavigationLevel = "overview" | "layer-detail";
 export type NodeType = "file" | "function" | "class" | "module" | "concept" | "config" | "document" | "service" | "table" | "endpoint" | "pipeline" | "schema" | "resource" | "domain" | "flow" | "step" | "article" | "entity" | "topic" | "claim" | "source";
 export type Complexity = "simple" | "moderate" | "complex";
 export type EdgeCategory = "structural" | "behavioral" | "data-flow" | "dependencies" | "semantic" | "infrastructure" | "domain" | "knowledge";
-export type ViewMode = "structural" | "domain" | "knowledge";
-export type DetailLevel = "file" | "class";
+export type ViewMode = "structural" | "domain" | "knowledge" | "diagrams";
 
 export interface FilterState {
   nodeTypes: Set<NodeType>;
@@ -147,13 +146,6 @@ interface DashboardStore {
   nodeTypeFilters: Record<NodeCategory, boolean>;
   toggleNodeTypeFilter: (category: NodeCategory) => void;
 
-  // Detail level: "file" shows only file nodes (architecture view),
-  // "class" shows files + class nodes (code structure view) with optional function expansion.
-  detailLevel: DetailLevel;
-  setDetailLevel: (level: DetailLevel) => void;
-  showFunctionsInClassView: boolean;
-  toggleShowFunctionsInClassView: () => void;
-
   setGraph: (graph: KnowledgeGraph) => void;
   selectNode: (nodeId: string | null) => void;
   navigateToNode: (nodeId: string) => void;
@@ -193,12 +185,14 @@ interface DashboardStore {
   isKnowledgeGraph: boolean;
   domainGraph: KnowledgeGraph | null;
   activeDomainId: string | null;
+  activeDiagramId: string | null;
 
   setDomainGraph: (graph: KnowledgeGraph) => void;
   setViewMode: (mode: ViewMode) => void;
   setIsKnowledgeGraph: (value: boolean) => void;
   navigateToDomain: (domainId: string) => void;
   clearActiveDomain: () => void;
+  setActiveDiagram: (id: string | null) => void;
 
   // Container expand/collapse + lazy layout caches
   expandedContainers: Set<string>;
@@ -333,29 +327,6 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
       // Filter changes shift container.nodeIds; cached child positions
       // may reference filtered-out children. Drop the cache so Stage 2
       // recomputes against the current set.
-      containerLayoutCache: new Map(),
-      containerSizeMemory: new Map(),
-      expandedContainers: new Set(),
-      pendingFocusContainer: null,
-    })),
-
-  detailLevel: "file",
-  setDetailLevel: (level) =>
-    set({
-      detailLevel: level,
-      // Detail level changes which nodes are visible; cached positions stale.
-      // Reset fn toggle so it doesn't resurrect when re-entering class view.
-      showFunctionsInClassView: false,
-      containerLayoutCache: new Map(),
-      containerSizeMemory: new Map(),
-      expandedContainers: new Set(),
-      pendingFocusContainer: null,
-    }),
-
-  showFunctionsInClassView: false,
-  toggleShowFunctionsInClassView: () =>
-    set((state) => ({
-      showFunctionsInClassView: !state.showFunctionsInClassView,
       containerLayoutCache: new Map(),
       containerSizeMemory: new Map(),
       expandedContainers: new Set(),
@@ -673,6 +644,7 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
   isKnowledgeGraph: false,
   domainGraph: null,
   activeDomainId: null,
+  activeDiagramId: null,
 
   setDomainGraph: (graph) => {
     set({ domainGraph: graph });
@@ -713,6 +685,8 @@ export const useDashboardStore = create<DashboardStore>()((set, get) => ({
       focusNodeId: null,
     });
   },
+
+  setActiveDiagram: (id) => set({ activeDiagramId: id }),
 
   expandedContainers: new Set<string>(),
   pendingFocusContainer: null,

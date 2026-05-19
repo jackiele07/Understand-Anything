@@ -23,12 +23,12 @@ import type { KeyboardShortcut } from "./hooks/useKeyboardShortcuts";
 import { ThemeProvider } from "./themes/index.ts";
 import { ThemePicker } from "./components/ThemePicker.tsx";
 import type { ThemeConfig } from "./themes/index.ts";
-import { I18nProvider, useI18n } from "./contexts/I18nContext.tsx";
 
 // Lazy-load heavy / optional components so they ship in separate chunks.
 const CodeViewer = lazy(() => import("./components/CodeViewer"));
 const LearnPanel = lazy(() => import("./components/LearnPanel"));
 const PathFinderModal = lazy(() => import("./components/PathFinderModal"));
+const DiagramsTab = lazy(() => import("./components/DiagramsTab"));
 const KeyboardShortcutsHelp = lazy(
   () => import("./components/KeyboardShortcutsHelp"),
 );
@@ -45,7 +45,6 @@ function dataUrl(fileName: string, token: string | null): string {
       "domain-graph.json": import.meta.env.VITE_DOMAIN_GRAPH_URL,
       "meta.json": import.meta.env.VITE_META_URL,
       "diff-overlay.json": import.meta.env.VITE_DIFF_OVERLAY_URL,
-      "config.json": import.meta.env.VITE_CONFIG_URL,
     };
     const url = envMap[fileName];
     if (url) return url;
@@ -97,13 +96,38 @@ function App() {
 }
 
 function Dashboard({ accessToken }: { accessToken: string }) {
+  const graph = useDashboardStore((s) => s.graph);
   const setGraph = useDashboardStore((s) => s.setGraph);
-  const setDomainGraph = useDashboardStore((s) => s.setDomainGraph);
+  const selectedNodeId = useDashboardStore((s) => s.selectedNodeId);
+  const tourActive = useDashboardStore((s) => s.tourActive);
+  const persona = useDashboardStore((s) => s.persona);
+  const codeViewerOpen = useDashboardStore((s) => s.codeViewerOpen);
+  const codeViewerExpanded = useDashboardStore((s) => s.codeViewerExpanded);
+  const expandCodeViewer = useDashboardStore((s) => s.expandCodeViewer);
+  const collapseCodeViewer = useDashboardStore((s) => s.collapseCodeViewer);
   const setDiffOverlay = useDashboardStore((s) => s.setDiffOverlay);
+  const pathFinderOpen = useDashboardStore((s) => s.pathFinderOpen);
+  const togglePathFinder = useDashboardStore((s) => s.togglePathFinder);
+  const nodeTypeFilters = useDashboardStore((s) => s.nodeTypeFilters);
+  const toggleNodeTypeFilter = useDashboardStore((s) => s.toggleNodeTypeFilter);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [graphIssues, setGraphIssues] = useState<GraphIssue[]>([]);
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
   const [metaTheme, setMetaTheme] = useState<ThemeConfig | null>(null);
-  const [outputLanguage, setOutputLanguage] = useState<string | undefined>();
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("info");
+  const viewMode = useDashboardStore((s) => s.viewMode);
+  const setViewMode = useDashboardStore((s) => s.setViewMode);
+  const isKnowledgeGraph = useDashboardStore((s) => s.isKnowledgeGraph);
+  const domainGraph = useDashboardStore((s) => s.domainGraph);
+  const setDomainGraph = useDashboardStore((s) => s.setDomainGraph);
+  const layoutIssues = useDashboardStore((s) => s.layoutIssues);
+  const isMobile = useIsMobile();
+  // Schema issues + ELK layout issues share the WarningBanner — graph-load
+  // problems and dashboard rendering problems are equally surfaced.
+  const allIssues = useMemo(
+    () => [...graphIssues, ...layoutIssues],
+    [graphIssues, layoutIssues],
+  );
 
   useEffect(() => {
     fetch(dataUrl("meta.json", accessToken))
@@ -112,13 +136,129 @@ function Dashboard({ accessToken }: { accessToken: string }) {
         if (meta?.theme) setMetaTheme(meta.theme);
       })
       .catch(() => {});
-    fetch(dataUrl("config.json", accessToken))
-      .then((r) => (r.ok ? r.json() : null))
-      .then((config) => {
-        if (config?.outputLanguage) setOutputLanguage(config.outputLanguage);
-      })
-      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (selectedNodeId) setSidebarTab("info");
+  }, [selectedNodeId]);
+
+  // Define keyboard shortcuts
+  const shortcuts = useMemo<KeyboardShortcut[]>(
+    () => [
+      // Help
+      {
+        key: "?",
+        shiftKey: true,
+        description: "Show keyboard shortcuts",
+        action: () => setShowKeyboardHelp((prev) => !prev),
+        category: "General",
+      },
+      // Navigation
+      {
+        key: "Escape",
+        description: "Close panels and modals / go back to overview",
+        action: () => {
+          // Read from store at invocation time to avoid stale closures
+          const state = useDashboardStore.getState();
+          if (state.pathFinderOpen) {
+            state.togglePathFinder();
+          } else if (state.filterPanelOpen) {
+            state.toggleFilterPanel();
+          } else if (state.exportMenuOpen) {
+            state.toggleExportMenu();
+          } else if (state.codeViewerExpanded) {
+            state.collapseCodeViewer();
+          } else if (state.codeViewerOpen) {
+            state.closeCodeViewer();
+          } else if (state.selectedNodeId) {
+            state.selectNode(null);
+          } else if (state.navigationLevel === "layer-detail") {
+            state.navigateToOverview();
+          } else if (state.tourActive) {
+            state.stopTour();
+          } else {
+            setShowKeyboardHelp(false);
+          }
+        },
+        category: "Navigation",
+      },
+      {
+        key: "/",
+        description: "Focus search bar",
+        action: () => {
+          const searchInput = document.querySelector<HTMLInputElement>(
+            'input[placeholder*="Search"]'
+          );
+          searchInput?.focus();
+        },
+        category: "Navigation",
+      },
+      // Tour controls
+      {
+        key: "ArrowRight",
+        description: "Next tour step",
+        action: () => {
+          const state = useDashboardStore.getState();
+          if (state.tourActive) {
+            state.nextTourStep();
+          }
+        },
+        category: "Tour",
+      },
+      {
+        key: "ArrowLeft",
+        description: "Previous tour step",
+        action: () => {
+          const state = useDashboardStore.getState();
+          if (state.tourActive) {
+            state.prevTourStep();
+          }
+        },
+        category: "Tour",
+      },
+      // View toggles
+      {
+        key: "d",
+        description: "Toggle diff mode",
+        action: () => {
+          const state = useDashboardStore.getState();
+          state.toggleDiffMode();
+        },
+        category: "View",
+      },
+      {
+        key: "f",
+        description: "Toggle filter panel",
+        action: () => {
+          const state = useDashboardStore.getState();
+          state.toggleFilterPanel();
+        },
+        category: "View",
+      },
+      {
+        key: "e",
+        description: "Toggle export menu",
+        action: () => {
+          const state = useDashboardStore.getState();
+          state.toggleExportMenu();
+        },
+        category: "View",
+      },
+      {
+        key: "p",
+        description: "Open path finder",
+        action: () => {
+          const state = useDashboardStore.getState();
+          state.togglePathFinder();
+        },
+        category: "View",
+      },
+    ],
+    []
+  );
+
+  // Register keyboard shortcuts
+  useKeyboardShortcuts(shortcuts);
 
   useEffect(() => {
     fetch(dataUrl("knowledge-graph.json", accessToken))
@@ -128,8 +268,9 @@ function Dashboard({ accessToken }: { accessToken: string }) {
         if (result.success && result.data) {
           setGraph(result.data);
           setGraphIssues(result.issues);
+          // Auto-detect knowledge graph kind
           if ((data as Record<string, unknown>).kind === "knowledge") {
-            useDashboardStore.getState().setViewMode("knowledge");
+            setViewMode("knowledge");
             useDashboardStore.getState().setIsKnowledgeGraph(true);
           }
           for (const issue of result.issues) {
@@ -174,7 +315,9 @@ function Dashboard({ accessToken }: { accessToken: string }) {
           }
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        // Silently ignore - diff overlay is optional
+      });
   }, [setDiffOverlay]);
 
   useEffect(() => {
@@ -192,182 +335,10 @@ function Dashboard({ accessToken }: { accessToken: string }) {
           console.warn(`[domain-graph] validation failed: ${result.fatal}`);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        // Silently ignore — domain graph is optional
+      });
   }, [setDomainGraph]);
-
-  return (
-    <I18nProvider language={outputLanguage ?? "en"}>
-      <ThemeProvider metaTheme={metaTheme}>
-        <DashboardContent
-          accessToken={accessToken}
-          loadError={loadError}
-          graphIssues={graphIssues}
-        />
-      </ThemeProvider>
-    </I18nProvider>
-  );
-}
-
-function DashboardContent({
-  accessToken,
-  loadError,
-  graphIssues,
-}: {
-  accessToken: string;
-  loadError: string | null;
-  graphIssues: GraphIssue[];
-}) {
-  const graph = useDashboardStore((s) => s.graph);
-  const selectedNodeId = useDashboardStore((s) => s.selectedNodeId);
-  const tourActive = useDashboardStore((s) => s.tourActive);
-  const persona = useDashboardStore((s) => s.persona);
-  const codeViewerOpen = useDashboardStore((s) => s.codeViewerOpen);
-  const codeViewerExpanded = useDashboardStore((s) => s.codeViewerExpanded);
-  const expandCodeViewer = useDashboardStore((s) => s.expandCodeViewer);
-  const collapseCodeViewer = useDashboardStore((s) => s.collapseCodeViewer);
-  const pathFinderOpen = useDashboardStore((s) => s.pathFinderOpen);
-  const togglePathFinder = useDashboardStore((s) => s.togglePathFinder);
-  const nodeTypeFilters = useDashboardStore((s) => s.nodeTypeFilters);
-  const toggleNodeTypeFilter = useDashboardStore((s) => s.toggleNodeTypeFilter);
-  const detailLevel = useDashboardStore((s) => s.detailLevel);
-  const setDetailLevel = useDashboardStore((s) => s.setDetailLevel);
-  const showFunctionsInClassView = useDashboardStore((s) => s.showFunctionsInClassView);
-  const toggleShowFunctionsInClassView = useDashboardStore((s) => s.toggleShowFunctionsInClassView);
-  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("info");
-  const viewMode = useDashboardStore((s) => s.viewMode);
-  const setViewMode = useDashboardStore((s) => s.setViewMode);
-  const isKnowledgeGraph = useDashboardStore((s) => s.isKnowledgeGraph);
-  const domainGraph = useDashboardStore((s) => s.domainGraph);
-  const layoutIssues = useDashboardStore((s) => s.layoutIssues);
-  const isMobile = useIsMobile();
-  const { t } = useI18n();
-  const allIssues = useMemo(
-    () => [...graphIssues, ...layoutIssues],
-    [graphIssues, layoutIssues],
-  );
-
-  useEffect(() => {
-    if (selectedNodeId) setSidebarTab("info");
-  }, [selectedNodeId]);
-
-  // Define keyboard shortcuts
-  const shortcuts = useMemo<KeyboardShortcut[]>(
-    () => [
-      // Help
-      {
-        key: "?",
-        shiftKey: true,
-        description: t.keyboardShortcuts.showHelp,
-        action: () => setShowKeyboardHelp((prev) => !prev),
-        category: "General",
-      },
-      // Navigation
-      {
-        key: "Escape",
-        description: t.keyboardShortcuts.escapeDesc,
-        action: () => {
-          // Read from store at invocation time to avoid stale closures
-          const state = useDashboardStore.getState();
-          if (state.pathFinderOpen) {
-            state.togglePathFinder();
-          } else if (state.filterPanelOpen) {
-            state.toggleFilterPanel();
-          } else if (state.exportMenuOpen) {
-            state.toggleExportMenu();
-          } else if (state.codeViewerExpanded) {
-            state.collapseCodeViewer();
-          } else if (state.codeViewerOpen) {
-            state.closeCodeViewer();
-          } else if (state.selectedNodeId) {
-            state.selectNode(null);
-          } else if (state.navigationLevel === "layer-detail") {
-            state.navigateToOverview();
-          } else if (state.tourActive) {
-            state.stopTour();
-          } else {
-            setShowKeyboardHelp(false);
-          }
-        },
-        category: "Navigation",
-      },
-      {
-        key: "/",
-        description: t.keyboardShortcuts.focusSearch,
-        action: () => {
-          const searchInput = document.querySelector<HTMLInputElement>(
-            '[data-testid="search-input"]'
-          );
-          searchInput?.focus();
-        },
-        category: "Navigation",
-      },
-      // Tour controls
-      {
-        key: "ArrowRight",
-        description: t.keyboardShortcuts.nextStep,
-        action: () => {
-          const state = useDashboardStore.getState();
-          if (state.tourActive) {
-            state.nextTourStep();
-          }
-        },
-        category: "Tour",
-      },
-      {
-        key: "ArrowLeft",
-        description: t.keyboardShortcuts.prevStep,
-        action: () => {
-          const state = useDashboardStore.getState();
-          if (state.tourActive) {
-            state.prevTourStep();
-          }
-        },
-        category: "Tour",
-      },
-      // View toggles
-      {
-        key: "d",
-        description: t.keyboardShortcuts.toggleDiff,
-        action: () => {
-          const state = useDashboardStore.getState();
-          state.toggleDiffMode();
-        },
-        category: "View",
-      },
-      {
-        key: "f",
-        description: t.keyboardShortcuts.toggleFilter,
-        action: () => {
-          const state = useDashboardStore.getState();
-          state.toggleFilterPanel();
-        },
-        category: "View",
-      },
-      {
-        key: "e",
-        description: t.keyboardShortcuts.toggleExport,
-        action: () => {
-          const state = useDashboardStore.getState();
-          state.toggleExportMenu();
-        },
-        category: "View",
-      },
-      {
-        key: "p",
-        description: t.keyboardShortcuts.openPathFinder,
-        action: () => {
-          const state = useDashboardStore.getState();
-          state.togglePathFinder();
-        },
-        category: "View",
-      },
-    ],
-    [t]
-  );
-
-  // Register keyboard shortcuts
-  useKeyboardShortcuts(shortcuts);
 
   // Determine sidebar content
   // NodeInfo always takes priority when a node is selected.
@@ -399,7 +370,7 @@ function DashboardContent({
                 : "text-text-muted hover:text-text-primary hover:bg-elevated"
             }`}
           >
-            {tab === "info" ? t.sidebar.info : t.sidebar.files}
+            {tab === "info" ? "Info" : "Files"}
           </button>
         ))}
       </div>
@@ -411,55 +382,77 @@ function DashboardContent({
 
   if (isMobile) {
     return (
-      <MobileLayout
-        accessToken={accessToken}
-        showKeyboardHelp={showKeyboardHelp}
-        setShowKeyboardHelp={setShowKeyboardHelp}
-        loadError={loadError}
-        allIssues={allIssues}
-        shortcuts={shortcuts}
-      />
+      <ThemeProvider metaTheme={metaTheme}>
+        <MobileLayout
+          accessToken={accessToken}
+          showKeyboardHelp={showKeyboardHelp}
+          setShowKeyboardHelp={setShowKeyboardHelp}
+          loadError={loadError}
+          allIssues={allIssues}
+          shortcuts={shortcuts}
+        />
+      </ThemeProvider>
     );
   }
 
   return (
+    <ThemeProvider metaTheme={metaTheme}>
     <div className="h-screen w-screen flex flex-col bg-root text-text-primary noise-overlay">
       {/* Header */}
       <header className="flex items-center px-3 sm:px-5 py-3 bg-surface border-b border-border-subtle shrink-0 gap-2 sm:gap-4">
         {/* Left — fixed */}
         <div className="flex items-center gap-3 sm:gap-5 shrink-0 min-w-0">
-          <h1 className="font-heading text-base sm:text-lg text-text-primary tracking-wide truncate max-w-[160px] sm:max-w-[220px] lg:max-w-none">
-            {graph?.project.name ?? t.common.appName}
+          <h1 className="font-serif text-base sm:text-lg text-text-primary tracking-wide truncate max-w-[160px] sm:max-w-[220px] lg:max-w-none">
+            {graph?.project.name ?? "Understand Anything"}
           </h1>
           <div className="w-px h-5 bg-border-subtle hidden sm:block" />
           <PersonaSelector />
-          {graph && !isKnowledgeGraph && domainGraph && (
+          {graph && !isKnowledgeGraph && (
             <>
               <div className="w-px h-5 bg-border-subtle" />
               <div className="flex items-center bg-elevated rounded-lg p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("domain")}
-                  title={t.drawer.domain}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                    viewMode === "domain"
-                      ? "bg-accent/20 text-accent"
-                      : "text-text-muted hover:text-text-secondary"
-                  }`}
-                >
-                  {t.drawer.domain}
-                </button>
+                {domainGraph && (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("domain")}
+                    title="Switch to domain view"
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      viewMode === "domain"
+                        ? "bg-accent/20 text-accent"
+                        : "text-text-muted hover:text-text-secondary"
+                    }`}
+                  >
+                    Domain
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setViewMode("structural")}
-                  title={t.drawer.structural}
+                  title="Switch to structural view"
                   className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
                     viewMode === "structural"
                       ? "bg-accent/20 text-accent"
                       : "text-text-muted hover:text-text-secondary"
                   }`}
                 >
-                  {t.drawer.structural}
+                  Structural
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("diagrams")}
+                  title="Switch to sequence diagrams view"
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === "diagrams"
+                      ? "bg-accent/20 text-accent"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  Diagrams
+                  {(graph?.diagrams?.length ?? 0) > 0 && (
+                    <span className="ml-1.5 text-[9px] bg-accent/20 text-accent rounded-full px-1.5 py-0.5">
+                      {graph!.diagrams!.length}
+                    </span>
+                  )}
                 </button>
               </div>
             </>
@@ -470,63 +463,17 @@ function DashboardContent({
         <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide">
           <div className="flex items-center gap-4 w-max">
             <DiffToggle />
-            {/* Detail level: file view (architecture) / class view (code structure) */}
-            {!isKnowledgeGraph && viewMode !== "domain" && (
-              <>
-                <div className="w-px h-5 bg-border-subtle" />
-                <div className="flex items-center bg-elevated rounded-lg p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setDetailLevel("file")}
-                    title={t.detailLevel.filesTitle}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                      detailLevel === "file"
-                        ? "bg-accent/20 text-accent"
-                        : "text-text-muted hover:text-text-secondary"
-                    }`}
-                  >
-                    {t.detailLevel.files}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDetailLevel("class")}
-                    title={t.detailLevel.classesTitle}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                      detailLevel === "class"
-                        ? "bg-accent/20 text-accent"
-                        : "text-text-muted hover:text-text-secondary"
-                    }`}
-                  >
-                    {t.detailLevel.classes}
-                  </button>
-                </div>
-                {detailLevel === "class" && (
-                  <button
-                    type="button"
-                    onClick={toggleShowFunctionsInClassView}
-                    title={t.detailLevel.fnTitle}
-                    className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-1 rounded border transition-colors ${
-                      showFunctionsInClassView
-                        ? "border-amber-500/50 bg-amber-500/10 text-amber-400"
-                        : "border-border-medium bg-elevated text-text-muted hover:text-text-secondary"
-                    }`}
-                  >
-                    {t.detailLevel.fn}
-                  </button>
-                )}
-              </>
-            )}
             <div className="flex items-center gap-1">
               {(isKnowledgeGraph ? [
-                { key: "knowledge" as const, label: t.nodeTypeLabels.all, color: "var(--color-node-article)" },
+                { key: "knowledge" as const, label: "All", color: "var(--color-node-article)" },
               ] : [
-                { key: "code" as const, label: t.nodeTypeLabels.code, color: "var(--color-node-file)" },
-                { key: "config" as const, label: t.nodeTypeLabels.config, color: "var(--color-node-config)" },
-                { key: "docs" as const, label: t.nodeTypeLabels.docs, color: "var(--color-node-document)" },
-                { key: "infra" as const, label: t.nodeTypeLabels.infra, color: "var(--color-node-service)" },
-                { key: "data" as const, label: t.nodeTypeLabels.data, color: "var(--color-node-table)" },
-                { key: "domain" as const, label: t.nodeTypeLabels.domain, color: "var(--color-node-concept)" },
-                { key: "knowledge" as const, label: t.nodeTypeLabels.knowledge, color: "var(--color-node-article)" },
+                { key: "code" as const, label: "Code", color: "var(--color-node-file)" },
+                { key: "config" as const, label: "Config", color: "var(--color-node-config)" },
+                { key: "docs" as const, label: "Docs", color: "var(--color-node-document)" },
+                { key: "infra" as const, label: "Infra", color: "var(--color-node-service)" },
+                { key: "data" as const, label: "Data", color: "var(--color-node-table)" },
+                { key: "domain" as const, label: "Domain", color: "var(--color-node-concept)" },
+                { key: "knowledge" as const, label: "Knowledge", color: "var(--color-node-article)" },
               ]).map((cat) => (
                 <button
                   key={cat.key}
@@ -560,7 +507,7 @@ function DashboardContent({
           <button
             onClick={togglePathFinder}
             className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-sm bg-elevated text-text-secondary hover:text-text-primary transition-colors"
-            title={t.pathFinder.title}
+            title="Find path between nodes (P)"
           >
             <svg
               className="w-4 h-4"
@@ -575,13 +522,13 @@ function DashboardContent({
                 d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
               />
             </svg>
-            <span className="hidden md:inline">{t.common.path}</span>
+            <span className="hidden md:inline">Path</span>
           </button>
           <ThemePicker />
           <button
             onClick={() => setShowKeyboardHelp(true)}
             className="text-text-muted hover:text-accent transition-colors"
-            title={t.keyboardShortcuts.showHelp}
+            title="Keyboard shortcuts (Shift + ?)"
           >
             <svg
               className="w-5 h-5"
@@ -623,11 +570,15 @@ function DashboardContent({
             <KnowledgeGraphView />
           ) : viewMode === "domain" && domainGraph ? (
             <DomainGraphView />
+          ) : viewMode === "diagrams" ? (
+            <Suspense fallback={null}>
+              <DiagramsTab />
+            </Suspense>
           ) : (
             <GraphView />
           )}
           <div className="absolute top-3 right-3 text-sm text-text-muted/60 pointer-events-none select-none">
-            {t.common.pressKeyboard}
+            Press <kbd className="kbd">?</kbd> for keyboard shortcuts
           </div>
         </div>
 
@@ -684,6 +635,7 @@ function DashboardContent({
         </Suspense>
       )}
     </div>
+    </ThemeProvider>
   );
 }
 
