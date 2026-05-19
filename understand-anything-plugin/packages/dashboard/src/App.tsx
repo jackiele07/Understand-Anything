@@ -23,6 +23,7 @@ import type { KeyboardShortcut } from "./hooks/useKeyboardShortcuts";
 import { ThemeProvider } from "./themes/index.ts";
 import { ThemePicker } from "./components/ThemePicker.tsx";
 import type { ThemeConfig } from "./themes/index.ts";
+import { I18nProvider } from "./contexts/I18nContext";
 
 // Lazy-load heavy / optional components so they ship in separate chunks.
 const CodeViewer = lazy(() => import("./components/CodeViewer"));
@@ -383,20 +384,23 @@ function Dashboard({ accessToken }: { accessToken: string }) {
 
   if (isMobile) {
     return (
-      <ThemeProvider metaTheme={metaTheme}>
-        <MobileLayout
-          accessToken={accessToken}
-          showKeyboardHelp={showKeyboardHelp}
-          setShowKeyboardHelp={setShowKeyboardHelp}
-          loadError={loadError}
-          allIssues={allIssues}
-          shortcuts={shortcuts}
-        />
-      </ThemeProvider>
+      <I18nProvider>
+        <ThemeProvider metaTheme={metaTheme}>
+          <MobileLayout
+            accessToken={accessToken}
+            showKeyboardHelp={showKeyboardHelp}
+            setShowKeyboardHelp={setShowKeyboardHelp}
+            loadError={loadError}
+            allIssues={allIssues}
+            shortcuts={shortcuts}
+          />
+        </ThemeProvider>
+      </I18nProvider>
     );
   }
 
   return (
+    <I18nProvider>
     <ThemeProvider metaTheme={metaTheme}>
     <div className="h-screen w-screen flex flex-col bg-root text-text-primary noise-overlay">
       {/* Header */}
@@ -658,6 +662,7 @@ function Dashboard({ accessToken }: { accessToken: string }) {
       )}
     </div>
     </ThemeProvider>
+    </I18nProvider>
   );
 }
 
