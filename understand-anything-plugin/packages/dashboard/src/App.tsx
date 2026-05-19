@@ -29,6 +29,7 @@ const CodeViewer = lazy(() => import("./components/CodeViewer"));
 const LearnPanel = lazy(() => import("./components/LearnPanel"));
 const PathFinderModal = lazy(() => import("./components/PathFinderModal"));
 const DiagramsTab = lazy(() => import("./components/DiagramsTab"));
+const ApiTab = lazy(() => import("./components/ApiTab"));
 const KeyboardShortcutsHelp = lazy(
   () => import("./components/KeyboardShortcutsHelp"),
 );
@@ -454,6 +455,23 @@ function Dashboard({ accessToken }: { accessToken: string }) {
                     </span>
                   )}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("api")}
+                  title="Switch to API reference view"
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === "api"
+                      ? "bg-accent/20 text-accent"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}
+                >
+                  API
+                  {(graph?.apis?.length ?? 0) > 0 && (
+                    <span className="ml-1.5 text-[9px] bg-accent/20 text-accent rounded-full px-1.5 py-0.5">
+                      {graph!.apis!.length}
+                    </span>
+                  )}
+                </button>
               </div>
             </>
           )}
@@ -573,6 +591,10 @@ function Dashboard({ accessToken }: { accessToken: string }) {
           ) : viewMode === "diagrams" ? (
             <Suspense fallback={null}>
               <DiagramsTab />
+            </Suspense>
+          ) : viewMode === "api" ? (
+            <Suspense fallback={null}>
+              <ApiTab />
             </Suspense>
           ) : (
             <GraphView />

@@ -152,6 +152,7 @@ export function sanitizeGraph(data: Record<string, unknown>): Record<string, unk
   if (data.tour === null || data.tour === undefined) result.tour = [];
   if (data.layers === null || data.layers === undefined) result.layers = [];
   if (data.diagrams === null || data.diagrams === undefined) result.diagrams = [];
+  if (data.apis === null || data.apis === undefined) result.apis = [];
 
   // Sanitize nodes
   if (Array.isArray(data.nodes)) {
@@ -427,6 +428,18 @@ export const SequenceDiagramSchema = z.object({
   mermaid: z.string(),
 });
 
+export const ApiEndpointSchema = z.object({
+  id: z.string(),
+  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "WS", "gRPC"]),
+  path: z.string(),
+  layerId: z.string(),
+  summary: z.string(),
+  auth: z.string().optional().nullable(),
+  requestType: z.string().optional().nullable(),
+  responseType: z.string().optional().nullable(),
+  filePath: z.string(),
+});
+
 export const KnowledgeGraphSchema = z.object({
   version: z.string(),
   kind: z.enum(["codebase", "knowledge"]).optional(),
@@ -436,6 +449,7 @@ export const KnowledgeGraphSchema = z.object({
   layers: z.array(LayerSchema),
   tour: z.array(TourStepSchema),
   diagrams: z.array(SequenceDiagramSchema).optional(),
+  apis: z.array(ApiEndpointSchema).optional(),
 });
 
 export interface GraphIssue {
@@ -671,6 +685,17 @@ export function validateGraph(data: unknown): ValidationResult {
     }
   }
 
+  // Validate apis (pass through valid entries, drop broken)
+  const validApis: z.infer<typeof ApiEndpointSchema>[] = [];
+  if (Array.isArray(fixed.apis)) {
+    for (let i = 0; i < (fixed.apis as unknown[]).length; i++) {
+      const result = ApiEndpointSchema.safeParse((fixed.apis as unknown[])[i]);
+      if (result.success) {
+        validApis.push(result.data);
+      }
+    }
+  }
+
   const graph = {
     version: typeof fixed.version === "string" ? fixed.version : "1.0.0",
     kind: typeof fixed.kind === "string" ? fixed.kind as "codebase" | "knowledge" : undefined,
@@ -680,6 +705,7 @@ export function validateGraph(data: unknown): ValidationResult {
     layers: validLayers,
     tour: validTour,
     diagrams: validDiagrams.length > 0 ? validDiagrams : undefined,
+    apis: validApis.length > 0 ? validApis : undefined,
   };
 
   return { success: true, data: graph, issues, errors: buildErrors(issues) };

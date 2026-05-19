@@ -106,14 +106,18 @@ Determine whether to run a full analysis or incremental update.
 
    | Condition | Action |
    |---|---|
-   | `--full` flag in `$ARGUMENTS` | Full analysis (all phases, including Phase 5.5 if `--with-flowchart` also present) |
+   | `--full` flag in `$ARGUMENTS` | Full analysis (all phases) + implicitly enables `--with-flowchart` and `--with-api` |
    | No existing graph or meta | Full analysis (all phases) |
    | `--with-flowchart` + existing graph + `diagrams[]` missing or empty | **Phase 5.5 only** — skip Phases 1–5, jump to Phase 5.5, re-save graph |
    | `--with-flowchart` + existing graph + partial `diagrams[]` (some entries present) | **Phase 5.5 only** — regenerate all diagrams, replacing existing `diagrams[]` |
    | `--with-flowchart` + existing graph + full `diagrams[]` present | Ask: "Diagrams already exist. Regenerate? **(a)** yes, **(b)** no". If (b), STOP. |
+   | `--with-api` + existing graph + `apis[]` missing or empty | **Phase 5.6 only** — skip Phases 1–5, jump to Phase 5.6, re-save graph |
+   | `--with-api` + existing graph + `apis[]` present | Ask: "API endpoints already exist. Regenerate? **(a)** yes, **(b)** no". If (b), STOP. |
+   | `--with-flowchart` + `--with-api` + existing graph + both missing | Run Phase 5.5 and Phase 5.6 in **parallel**, re-save graph |
    | `--review` flag + existing graph + unchanged commit hash | Skip to Phase 6 (review-only — reuse existing assembled graph) |
    | Existing graph + unchanged commit hash | Ask the user: "The graph is up to date at this commit. Would you like to: **(a)** run a full rebuild (`--full`), **(b)** run the LLM graph reviewer (`--review`), or **(c)** do nothing?" Then follow their choice. If they pick (c), STOP. |
    | `--with-flowchart` + incremental update (changed files) | Run incremental update (Phases 1–5) then also run Phase 5.5 to regenerate all diagrams |
+   | `--with-api` + incremental update (changed files) | Run incremental update (Phases 1–5) then also run Phase 5.6 to regenerate API endpoints |
    | Existing graph + changed files | Incremental update (re-analyze changed files only) |
 
    **Review-only path:** Copy the existing `knowledge-graph.json` to `$PROJECT_ROOT/.understand-anything/intermediate/assembled-graph.json`, then jump directly to Phase 6 step 3.
@@ -552,6 +556,69 @@ Produce a `diagrams` array:
 
 ---
 
+## Phase 5.6 — API EXTRACTION (only runs when `--with-api` in `$ARGUMENTS` or implied by `--full`)
+
+Extract all API endpoints from the codebase and build an `apis[]` array for the knowledge graph.
+
+**When both `--with-flowchart` and `--with-api` are present (or `--full` implies both), run Phase 5.5 and Phase 5.6 in parallel.**
+
+### Step 1 — Find route definition files (regex pre-filter)
+
+Scan the project file list (from Phase 1, or `git ls-files` for fast-path) and filter to candidate files using these patterns:
+
+- **ASP.NET Core / C#**: files matching `*Program.cs`, `*Startup.cs`, `*Controller.cs`, `*Controller*.cs`, or containing `app.Map`, `MapGet`, `MapPost`, `MapPut`, `MapPatch`, `MapDelete`, `[HttpGet`, `[HttpPost`, `[HttpPut`, `[HttpPatch`, `[HttpDelete`, `[Route(`
+- **Express / Node.js**: files containing `router.get(`, `router.post(`, `app.get(`, `app.post(`, `fastify.route(`
+- **FastAPI / Flask / Django**: files containing `@app.route`, `@router.get`, `@router.post`, `path(`, `re_path(`
+- **gRPC**: `*.proto` files containing `service` and `rpc` definitions
+- **WebSocket**: files containing `.MapHub(`, `.Map("/ws`, `.Map("/device`, `UseWebSockets`, `AcceptWebSocketAsync`
+
+```bash
+# Example for .NET project:
+grep -rln "app\.Map\|MapGet\|MapPost\|MapPut\|MapPatch\|MapDelete\|\[HttpGet\|\[HttpPost\|\[Route\(" $PROJECT_ROOT \
+  --include="*.cs" | grep -iv "obj\|bin\|node_modules\|\.git"
+```
+
+### Step 2 — Extract endpoints (LLM)
+
+For each candidate file, use an LLM subagent to extract all route definitions. Run up to **5 subagents concurrently**.
+
+Prompt each subagent:
+
+> Read this file and extract every API endpoint definition. For each endpoint produce a JSON object:
+> ```json
+> {
+>   "id": "api:<METHOD>:<path>",
+>   "method": "GET|POST|PUT|PATCH|DELETE|WS|gRPC",
+>   "path": "/the/path",
+>   "layerId": "<layer id that best matches this file, from the layers list below>",
+>   "summary": "<one-sentence description of what this endpoint does>",
+>   "auth": "<Bearer|ApiKey|DeviceToken|None — infer from middleware/attributes>",
+>   "requestType": "<request body type name, null if none>",
+>   "responseType": "<response type or HTTP status + description>",
+>   "filePath": "<relative file path>"
+> }
+> ```
+> Layers available:
+> ```json
+> <graph.layers as JSON array>
+> ```
+> File: `<filePath>`
+> Content:
+> ```
+> <file content>
+> ```
+> Return a JSON array of endpoint objects. Return `[]` if no endpoints found.
+
+Collect all results into a flat `apis[]` array. Deduplicate by `id`.
+
+### Step 3 — Save endpoints
+
+**For fast-path** (no full analysis): read existing `knowledge-graph.json`, add/replace the `apis` key, write back to `knowledge-graph.json`.
+
+**For full analysis path**: store `apis` array in memory; Phase 6 will include it in the assembled graph.
+
+---
+
 ## Phase 6 — REVIEW
 
 Assemble the full KnowledgeGraph JSON object:
@@ -571,7 +638,8 @@ Assemble the full KnowledgeGraph JSON object:
   "edges": [<all edges from assembled-graph.json after Phase 3 review>],
   "layers": [<layers from Phase 4>],
   "tour": [<steps from Phase 5>],
-  "diagrams": [<diagrams from Phase 5.5, or [] if --with-flowchart not present>]
+  "diagrams": [<diagrams from Phase 5.5, or [] if --with-flowchart not present>],
+  "apis": [<endpoints from Phase 5.6, or [] if --with-api not present>]
 }
 ```
 
@@ -753,6 +821,7 @@ Pass these parameters in the dispatch prompt:
    - Layers identified (with names)
    - Tour steps generated (count)
    - Sequence diagrams generated (count, or "skipped — use `--with-flowchart` to generate")
+   - API endpoints extracted (count, or "skipped — use `--with-api` to extract")
    - Any warnings from the reviewer
    - Path to the output file: `$PROJECT_ROOT/.understand-anything/knowledge-graph.json`
 
