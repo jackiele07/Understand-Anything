@@ -83,6 +83,8 @@ Start the Understand Anything dashboard to visualize the knowledge graph for the
    ```
    Run this in the background so the user can continue working.
 
+   > **⚠️ `GRAPH_DIR` must be the project root** — the directory that *contains* `.understand-anything/`, not the subdirectory itself. Do NOT set it to `<project-dir>/.understand-anything/` or deeper. The Vite config appends `.understand-anything/` internally; passing the subdirectory means the file is never found and the dashboard shows "Missing or invalid project metadata".
+
 6. **Capture the access token URL from the server output.** The Vite server prints a line like:
    ```
    🔑  Dashboard URL: http://127.0.0.1:<PORT>?token=<TOKEN>
@@ -102,4 +104,4 @@ Start the Understand Anything dashboard to visualize the knowledge graph for the
 
 - The dashboard auto-opens in the default browser via `--open`
 - If port 5173 is already in use, Vite will pick the next available port
-- The `GRAPH_DIR` environment variable tells the dashboard where to find the knowledge graph
+- `GRAPH_DIR` must be the **project root** (the directory containing `.understand-anything/`). The Vite config appends `.understand-anything/` internally — passing the subdirectory as `GRAPH_DIR` causes a 404 and a "Missing or invalid project metadata" error in the dashboard.
