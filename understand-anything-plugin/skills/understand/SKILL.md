@@ -621,7 +621,13 @@ Collect all results into a flat `apis[]` array. Deduplicate by `id`.
 
 ## Phase 6 — REVIEW
 
-Assemble the full KnowledgeGraph JSON object:
+Assemble the full KnowledgeGraph JSON object.
+
+> **⚠️ CRITICAL — top-level key names:**
+> - The project metadata key MUST be `"project"` — **NOT** `"metadata"`, `"projectMetadata"`, or any other name. The schema validator treats any key other than `"project"` as a fatal error.
+> - `"diagrams"` entries MUST have `"protocol"` (one of `"REST"`, `"gRPC"`, `"WebSocket"`, `"NATS"`) — not `"type"` or `"description"`.
+> - `"apis"` entries MUST have `"method"` (one of `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"WS"`, `"gRPC"`), `"layerId"`, `"summary"`, and `"filePath"` — NOT `"name"`, `"service"`, `"httpMethod"`, `"nodeId"`, `"description"`, or `"statusCodes"`.
+> - See the **Reference: KnowledgeGraph Schema** section at the bottom of this skill for complete field lists.
 
 ```json
 {
@@ -842,6 +848,71 @@ Pass these parameters in the dispatch prompt:
 ---
 
 ## Reference: KnowledgeGraph Schema
+
+### Top-level structure
+
+```json
+{
+  "version": "2.1",
+  "project": { ... },
+  "nodes": [ ... ],
+  "edges": [ ... ],
+  "layers": [ ... ],
+  "tour": [ ... ],
+  "diagrams": [ ... ],
+  "apis": [ ... ]
+}
+```
+
+> **⚠️ Fatal validation errors — these will prevent the dashboard from loading:**
+> - Missing `"project"` key (using `"metadata"` or any other name → fatal)
+> - Missing required fields inside `"project"` (all six are required)
+> - `"nodes"`, `"edges"`, `"layers"`, or `"tour"` not being arrays
+
+### `project` object (all fields required)
+
+```json
+{
+  "name": "<string>",
+  "description": "<string>",
+  "analyzedAt": "<ISO 8601 string>",
+  "gitCommitHash": "<string>",
+  "languages": ["<string>", ...],
+  "frameworks": ["<string>", ...]
+}
+```
+
+### `diagrams[]` entries
+
+```json
+{
+  "id": "<string>",
+  "title": "<string>",
+  "protocol": "REST" | "gRPC" | "WebSocket" | "NATS",
+  "entryPoint": "<nodeId or null>",
+  "mermaid": "<sequenceDiagram string>"
+}
+```
+
+> **⚠️ `"protocol"` is required.** Do NOT use `"type"` or `"description"` as substitutes. Invalid entries are silently dropped.
+
+### `apis[]` entries
+
+```json
+{
+  "id": "<string>",
+  "method": "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "WS" | "gRPC",
+  "path": "<string>",
+  "layerId": "<layer id from layers[]>",
+  "summary": "<string>",
+  "auth": "<string or null>",
+  "requestType": "<string or null>",
+  "responseType": "<string or null>",
+  "filePath": "<relative file path>"
+}
+```
+
+> **⚠️ Required fields:** `id`, `method`, `path`, `layerId`, `summary`, `filePath`. Do NOT add `"name"`, `"service"`, `"httpMethod"`, `"nodeId"`, `"description"`, or `"statusCodes"` — those fields are not in the schema and invalid entries are silently dropped.
 
 ### Node Types (13 total)
 | Type | Description | ID Convention |
