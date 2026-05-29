@@ -72,10 +72,17 @@ function generateOpenApi(apis: ApiEndpoint[], projectName: string): string {
     if (!paths[api.path]) paths[api.path] = {};
     const reqSchema = parseTypeToSchema(api.requestType);
     const resSchema = parseTypeToSchema(api.responseType);
+    const pathParams = [...api.path.matchAll(/\{(\w+)\}/g)].map(m => ({
+      name: m[1],
+      in: "path",
+      required: true,
+      schema: { type: "string" },
+    }));
     paths[api.path][method] = {
       summary: api.summary,
       tags: [api.layerId.replace("layer:", "")],
       security: api.auth && api.auth !== "None" ? [{ [api.auth]: [] }] : [],
+      ...(pathParams.length > 0 ? { parameters: pathParams } : {}),
       ...(reqSchema ? {
         requestBody: {
           required: true,
