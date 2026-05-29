@@ -16,6 +16,53 @@ const METHOD_ORDER: Record<string, number> = {
   GET: 0, POST: 1, PUT: 2, PATCH: 3, DELETE: 4, WS: 5, gRPC: 6,
 };
 
+function parseTypeToSchema(typeStr: string | null | undefined): Record<string, unknown> | undefined {
+  if (!typeStr) return undefined;
+
+  // array of { ... }
+  if (typeStr.startsWith("array of ")) {
+    const inner = typeStr.slice("array of ".length);
+    return { type: "array", items: parseTypeToSchema(inner) ?? { type: "object" } };
+  }
+
+  // stream of { ... }
+  if (typeStr.startsWith("stream of ")) {
+    const inner = typeStr.slice("stream of ".length);
+    return { type: "array", items: parseTypeToSchema(inner) ?? { type: "object" }, description: "Streaming" };
+  }
+
+  // { field: type, field?: type, ... }
+  const objMatch = typeStr.match(/^\{([^}]+)\}/);
+  if (objMatch) {
+    const properties: Record<string, Record<string, unknown>> = {};
+    const required: string[] = [];
+    for (const raw of objMatch[1].split(",")) {
+      const m = raw.trim().match(/^(\w+)(\?)?\s*:\s*(.+)$/);
+      if (!m) continue;
+      const [, name, optional, t] = m;
+      const tt = t.trim();
+      const schemaType =
+        tt === "string" || tt === "DateTime" || tt === "Guid" ? "string"
+        : tt === "number" ? "number"
+        : tt === "boolean" ? "boolean"
+        : tt.endsWith("[]") ? "array"
+        : "string";
+      properties[name] = schemaType === "array"
+        ? { type: "array", items: { type: "object" } }
+        : { type: schemaType };
+      if (!optional) required.push(name);
+    }
+    return {
+      type: "object",
+      properties,
+      ...(required.length > 0 ? { required } : {}),
+    };
+  }
+
+  // fallback: preserve as description
+  return { type: "object", description: typeStr };
+}
+
 function generateOpenApi(apis: ApiEndpoint[], projectName: string): string {
   const paths: Record<string, Record<string, unknown>> = {};
 
@@ -23,17 +70,22 @@ function generateOpenApi(apis: ApiEndpoint[], projectName: string): string {
     if (api.method === "WS" || api.method === "gRPC") continue;
     const method = api.method.toLowerCase();
     if (!paths[api.path]) paths[api.path] = {};
+    const reqSchema = parseTypeToSchema(api.requestType);
+    const resSchema = parseTypeToSchema(api.responseType);
     paths[api.path][method] = {
       summary: api.summary,
       tags: [api.layerId.replace("layer:", "")],
       security: api.auth && api.auth !== "None" ? [{ [api.auth]: [] }] : [],
-      requestBody: api.requestType ? {
-        content: { "application/json": { schema: { description: api.requestType } } },
-      } : undefined,
+      ...(reqSchema ? {
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: reqSchema } },
+        },
+      } : {}),
       responses: {
         "200": {
-          description: api.responseType ?? "Success",
-          content: { "application/json": { schema: { description: api.responseType ?? "" } } },
+          description: "Success",
+          ...(resSchema ? { content: { "application/json": { schema: resSchema } } } : {}),
         },
       },
     };
